@@ -17,8 +17,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-HOST = "127.0.0.1"
-PORT = 8765
+HOST = os.environ.get("HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "8765"))
 BASE = Path.cwd() / "VideoFX_Studio_Files"
 BASE.mkdir(parents=True, exist_ok=True)
 jobs = {}
@@ -205,7 +205,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     missing=[x for x in ('ffmpeg','ffprobe') if shutil.which(x) is None]
     if missing: print('[!] مفقود: '+', '.join(missing)+'\nنفّذ: pkg update && pkg install python ffmpeg'); return
-    server=ThreadingHTTPServer((HOST,PORT),Handler); print(f'\nVideoFX Studio V2\nافتح في المتصفح: http://{HOST}:{PORT}\nاضغط Ctrl+C للإيقاف.\n')
+    server=ThreadingHTTPServer((HOST,PORT),Handler); print(f'\nVideoFX Studio V2\nListening on {HOST}:{PORT}\n')
     try: server.serve_forever()
     except KeyboardInterrupt: pass
     finally: server.server_close()

@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+VideoFX_Studio_Files/
+*.mp4
+*.json
+*.log

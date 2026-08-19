@@ -116,8 +116,8 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
             return
         if mode == 'convert':
             out=make_output(src,'Auto_1080x1920_60FPS')
-            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=1080:1920:flags=lanczos,fps=60','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(out)]
-            jobs[jid].update(message='تحويل الفيديو إلى 1080×1920 و60 FPS...', progress=5)
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,fps=60','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(out)]
+            jobs[jid].update(message='تحويل الفيديو عمودياً إلى 1080 عرض × 1920 طول و60 FPS...', progress=5)
             p=subprocess.Popen(encode,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,bufsize=1)
             dur=max(m['duration_sec'],.1); last=5
             for line in p.stderr:
@@ -134,8 +134,8 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
             # same timestamp trick used by the successful TikTok method.
             out=make_output(src,'Professional_1080p60_TikTokTiming')
             stage=out.with_name(out.stem+'_stage.mp4')
-            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=w=1080:h=1920:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=60','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(stage)]
-            jobs[jid].update(message='الخيار الاحترافي: تجهيز 1080p / 60 FPS بجودة عالية...', progress=5)
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,fps=60','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(stage)]
+            jobs[jid].update(message='الخيار الاحترافي: تجهيز فيديو عمودي 1080 عرض × 1920 طول و60 FPS...', progress=5)
             p=subprocess.Popen(encode,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,bufsize=1)
             dur=max(m['duration_sec'],.1); last=5
             for line in p.stderr:

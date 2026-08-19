@@ -119,14 +119,16 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
             # same timestamp trick used by the successful TikTok method.
             out=make_output(src,'Professional_1080p60_TikTokTiming')
             stage=out.with_name(out.stem+'_stage.mp4')
-            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=w=1080:h=1920:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=60','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr',str(stage)]
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=w=1080:h=1920:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=60','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(stage)]
             jobs[jid].update(message='الخيار الاحترافي: تجهيز 1080p / 60 FPS بجودة عالية...', progress=5)
             p=subprocess.Popen(encode,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,bufsize=1)
             dur=max(m['duration_sec'],.1); last=5
             for line in p.stderr:
-                mm=re.search(r'time=(\d+):([0-5]?\d):([0-5]?\d(?:\.\d+)?)',line)
-                if mm:
-                    sec=int(mm.group(1))*3600+int(mm.group(2))*60+float(mm.group(3)); prog=min(88,5+int(sec/dur*83))
+                mm_ms=re.search(r'out_time_ms=(\d+)',line)
+                mm=re.search(r'out_time=(\d+):([0-5]?\d):([0-5]?\d(?:\.\d+)?)',line)
+                sec=(int(mm_ms.group(1))/1000000) if mm_ms else (int(mm.group(1))*3600+int(mm.group(2))*60+float(mm.group(3)) if mm else None)
+                if sec is not None:
+                    prog=min(88,5+int(sec/dur*83))
                     if prog>last: last=prog; jobs[jid]['progress']=prog
             if p.wait()!=0 or not stage.exists(): raise RuntimeError('فشل تجهيز النسخة الاحترافية.')
             jobs[jid].update(progress=92,message='تطبيق توقيت TikTok على النسخة الاحترافية...')

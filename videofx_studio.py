@@ -119,7 +119,7 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
             # same timestamp trick used by the successful TikTok method.
             out=make_output(src,'Professional_1080p60_TikTokTiming')
             stage=out.with_name(out.stem+'_stage.mp4')
-            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=w=min(iw\\,1080):h=min(ih\\,1920):force_original_aspect_ratio=decrease:force_divisible_by=2,fps=60','-c:v','libx264','-preset','veryfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr',str(stage)]
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=w=1080:h=1920:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=60','-c:v','libx264','-preset','veryfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr',str(stage)]
             jobs[jid].update(message='الخيار الاحترافي: تجهيز 1080p / 60 FPS بجودة عالية...')
             p=subprocess.run(encode,capture_output=True,text=True)
             if p.returncode!=0 or not stage.exists(): raise RuntimeError(p.stderr.strip() or 'فشل تجهيز النسخة الاحترافية.')
@@ -142,7 +142,7 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
         codec='hevc' if codec_choice=='hevc' and encoder_available('libx265') else 'h264'
         vcodec='libx265' if codec=='hevc' else 'libx264'; tag=f'{profile}_{int(out_fps)}FPS_{codec}'; out=make_output(src,tag)
         cmd=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?']
-        if tiktok=='1080': cmd += ['-vf','scale=w=min(iw\\,1920):h=min(ih\\,1080):force_original_aspect_ratio=decrease:force_divisible_by=2']
+        if tiktok=='1080': cmd += ['-vf','scale=w=1920:h=1080:force_original_aspect_ratio=decrease:force_divisible_by=2']
         cmd += ['-c:v',vcodec,'-crf','16']
         if codec=='h264': cmd += ['-preset','slow','-profile:v','high','-pix_fmt','yuv420p']
         else: cmd += ['-preset','slow','-tag:v','hvc1','-pix_fmt','yuv420p']

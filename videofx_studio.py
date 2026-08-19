@@ -114,6 +114,21 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
             final=probe(out)
             jobs[jid].update(state='done',progress=100,message='تم تجهيز توقيت TikTok بدون إعادة ترميز.',output=str(out),output_name=out.name,info=final)
             return
+        if mode == 'convert':
+            out=make_output(src,'Auto_1080x1920_60FPS')
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=1080:1920:flags=lanczos,fps=60','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(out)]
+            jobs[jid].update(message='تحويل الفيديو إلى 1080×1920 و60 FPS...', progress=5)
+            p=subprocess.Popen(encode,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,bufsize=1)
+            dur=max(m['duration_sec'],.1); last=5
+            for line in p.stderr:
+                mm=re.search(r'out_time_ms=(\d+)',line)
+                if mm:
+                    prog=min(94,5+int((int(mm.group(1))/1000000)/dur*89))
+                    if prog>last: last=prog; jobs[jid]['progress']=prog
+            if p.wait()!=0 or not out.exists(): raise RuntimeError('فشل تحويل الفيديو إلى 1080×1920 و60 FPS.')
+            final=probe(out)
+            jobs[jid].update(state='done',progress=100,message='اكتمل التحويل، وتم فحص الدقة وFPS.',output=str(out),output_name=out.name,info=final)
+            return
         if mode == 'fps':
             # Professional path: encode a natural 1080p60 master, then apply the
             # same timestamp trick used by the successful TikTok method.
@@ -204,7 +219,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path=='/start':
                 mode=fields.get('mode','original'); target=fields.get('fps','auto'); profile=fields.get('profile','auto'); tiktok=fields.get('tiktok','off'); codec=fields.get('codec','auto')
-                if mode not in ('original','timing','multiplier','fps','tiktok') or target not in ('auto','60','90','120') or profile not in ('auto','gaming','nature','standard') or tiktok not in ('off','1080') or codec not in ('auto','h264','hevc'): raise RuntimeError('خيار معالجة غير صالح')
+                if mode not in ('original','timing','multiplier','fps','convert','tiktok') or target not in ('auto','60','90','120') or profile not in ('auto','gaming','nature','standard') or tiktok not in ('off','1080') or codec not in ('auto','h264','hevc'): raise RuntimeError('خيار معالجة غير صالح')
                 jid=uuid.uuid4().hex; jobs[jid]={'state':'queued','progress':0,'message':'في الانتظار...'}; threading.Thread(target=process,args=(jid,tmp,target,profile,tiktok,codec,mode),daemon=True).start(); self.send_json({'ok':True,'job':jid}); return
             tmp.unlink(missing_ok=True); self.send_error(404)
         except Exception as e: self.send_json({'ok':False,'error':str(e)},400)

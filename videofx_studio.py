@@ -67,14 +67,18 @@ def detect_profile(path, m):
     return 'standard', 'Standard'
 
 def probe(path):
-    cmd=['ffprobe','-v','error','-show_entries','stream=index,codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,duration,bit_rate:format=duration,size,bit_rate','-of','json',str(path)]
+    cmd=['ffprobe','-v','error','-show_entries','stream=index,codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,duration,bit_rate:stream_tags=rotate:format=duration,size,bit_rate','-of','json',str(path)]
     p=run(cmd)
     if p.returncode!=0: raise RuntimeError(p.stderr.strip() or 'تعذر قراءة الفيديو')
     data=json.loads(p.stdout); streams=data.get('streams',[]); vs=next((s for s in streams if s.get('codec_type')=='video'),None)
     if not vs: raise RuntimeError('الملف لا يحتوي على مسار فيديو صالح')
     fmt=data.get('format',{}); dur=float(vs.get('duration') or fmt.get('duration') or 0); size=int(fmt.get('size') or Path(path).stat().st_size)
     rate=vs.get('bit_rate') or fmt.get('bit_rate') or 0
-    m={'width':int(vs.get('width') or 0),'height':int(vs.get('height') or 0),'fps':round(parse_rate(vs.get('avg_frame_rate')) or parse_rate(vs.get('r_frame_rate')),3),'duration_sec':dur,'duration':format_duration(dur),'codec':vs.get('codec_name','?'),'bitrate_mbps':mbps(rate),'size_bytes':size}
+    raw_width=int(vs.get('width') or 0); raw_height=int(vs.get('height') or 0)
+    try: rotation=int(float((vs.get('tags') or {}).get('rotate') or 0)) % 360
+    except Exception: rotation=0
+    display_width, display_height = (raw_height, raw_width) if rotation in (90,270) else (raw_width, raw_height)
+    m={'width':display_width,'height':display_height,'raw_width':raw_width,'raw_height':raw_height,'rotation':rotation,'fps':round(parse_rate(vs.get('avg_frame_rate')) or parse_rate(vs.get('r_frame_rate')),3),'duration_sec':dur,'duration':format_duration(dur),'codec':vs.get('codec_name','?'),'bitrate_mbps':mbps(rate),'size_bytes':size}
     m['detected_profile'],m['detected_profile_label']=detect_profile(path,m); return m
 
 def bitrate_for(w,h,fps,profile,codec):
@@ -102,6 +106,12 @@ def make_output(src, tag):
 def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
     try:
         jobs[jid].update(state='processing',progress=1,message='فحص الملف مع الحفاظ على التوقيت...'); m=probe(src)
+        requested_fps = 0 if target in ('auto','') else float(target)
+        output_fps = max(60.0, requested_fps or float(m['fps'] or 0))
+        output_fps_text = str(int(output_fps)) if output_fps.is_integer() else str(round(output_fps,3))
+        box = '1920:1080' if m['width'] >= m['height'] else '1080:1920'
+        scale_filter = f'scale={box}:force_original_aspect_ratio=decrease:force_divisible_by=2'
+
         if mode in ('timing','multiplier'):
             # Restored working method: no video/audio re-encode; scale timestamps only.
             # A 15-second 60-FPS source becomes about 30 seconds before TikTok,
@@ -115,9 +125,9 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
             jobs[jid].update(state='done',progress=100,message='تم تجهيز توقيت TikTok بدون إعادة ترميز.',output=str(out),output_name=out.name,info=final)
             return
         if mode == 'convert':
-            out=make_output(src,'Auto_1080x1920_60FPS')
-            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,fps=60','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(out)]
-            jobs[jid].update(message='تحويل الفيديو عمودياً إلى 1080 عرض × 1920 طول و60 FPS...', progress=5)
+            out=make_output(src,'Auto_1080p_'+output_fps_text+'FPS')
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf',f'{scale_filter},fps={output_fps_text}','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(out)]
+            jobs[jid].update(message=f'تحويل الفيديو إلى 1080p مع الحفاظ على الاتجاه و{output_fps_text} FPS...', progress=5)
             p=subprocess.Popen(encode,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,bufsize=1)
             dur=max(m['duration_sec'],.1); last=5
             for line in p.stderr:
@@ -125,17 +135,17 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
                 if mm:
                     prog=min(94,5+int((int(mm.group(1))/1000000)/dur*89))
                     if prog>last: last=prog; jobs[jid]['progress']=prog
-            if p.wait()!=0 or not out.exists(): raise RuntimeError('فشل تحويل الفيديو إلى 1080×1920 و60 FPS.')
+            if p.wait()!=0 or not out.exists(): raise RuntimeError('فشل تحويل الفيديو إلى 1080p مع الحفاظ على الاتجاه.')
             final=probe(out)
             jobs[jid].update(state='done',progress=100,message='اكتمل التحويل، وتم فحص الدقة وFPS.',output=str(out),output_name=out.name,info=final)
             return
         if mode == 'fps':
             # Professional path: encode a natural 1080p60 master, then apply the
             # same timestamp trick used by the successful TikTok method.
-            out=make_output(src,'Professional_1080p60_TikTokTiming')
+            out=make_output(src,f'Professional_1080p_{output_fps_text}FPS_TikTokTiming')
             stage=out.with_name(out.stem+'_stage.mp4')
-            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf','scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,fps=60','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(stage)]
-            jobs[jid].update(message='الخيار الاحترافي: تجهيز فيديو عمودي 1080 عرض × 1920 طول و60 FPS...', progress=5)
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf',f'{scale_filter},fps={output_fps_text}','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(stage)]
+            jobs[jid].update(message=f'الخيار الاحترافي: تجهيز فيديو 1080p مع الحفاظ على الاتجاه و{output_fps_text} FPS...', progress=5)
             p=subprocess.Popen(encode,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,bufsize=1)
             dur=max(m['duration_sec'],.1); last=5
             for line in p.stderr:
@@ -165,7 +175,7 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
         codec='hevc' if codec_choice=='hevc' and encoder_available('libx265') else 'h264'
         vcodec='libx265' if codec=='hevc' else 'libx264'; tag=f'{profile}_{int(out_fps)}FPS_{codec}'; out=make_output(src,tag)
         cmd=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?']
-        if tiktok=='1080': cmd += ['-vf','scale=w=1920:h=1080:force_original_aspect_ratio=decrease:force_divisible_by=2']
+        if tiktok=='1080': cmd += ['-vf',scale_filter]
         cmd += ['-c:v',vcodec,'-crf','16']
         if codec=='h264': cmd += ['-preset','slow','-profile:v','high','-pix_fmt','yuv420p']
         else: cmd += ['-preset','slow','-tag:v','hvc1','-pix_fmt','yuv420p']

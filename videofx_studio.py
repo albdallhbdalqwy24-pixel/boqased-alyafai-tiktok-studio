@@ -227,7 +227,11 @@ class Handler(BaseHTTPRequestHandler):
         fields={}; files={}
         for item in form.list or []:
             if item.filename:
-                files[item.name]=(item.filename, item.file)
+                suffix = Path(item.filename).suffix or '.input'
+                saved = BASE / (uuid.uuid4().hex + suffix)
+                with saved.open('wb') as dst:
+                    shutil.copyfileobj(item.file, dst, 1024 * 1024)
+                files[item.name]=(item.filename, saved)
             else:
                 fields[item.name]=item.value
         return fields,files
@@ -235,10 +239,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             fields,files=self._multipart()
             if 'file' not in files or not files['file']: raise RuntimeError('لم يتم اختيار فيديو')
-            name,uploaded=files['file']; tmp=BASE/(uuid.uuid4().hex+(Path(name).suffix or '.input'))
-            with tmp.open('wb') as dst:
-                shutil.copyfileobj(uploaded, dst, 1024 * 1024)
-            del uploaded
+            name,tmp=files['file']
             if self.path=='/probe':
                 try: self.send_json({'ok':True,**probe(tmp)})
                 finally: tmp.unlink(missing_ok=True)

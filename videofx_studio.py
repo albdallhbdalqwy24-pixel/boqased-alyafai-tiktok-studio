@@ -6,6 +6,8 @@
 """
 import json
 import mimetypes
+import cgi
+import gc
 import os
 import re
 import shutil
@@ -21,6 +23,8 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8765"))
 BASE = Path.cwd() / "VideoFX_Studio_Files"
 BASE.mkdir(parents=True, exist_ok=True)
+MAX_UPLOAD_BYTES = 220 * 1024 * 1024
+process_slots = threading.BoundedSemaphore(1)
 jobs = {}
 
 HTML = r'''<!doctype html>
@@ -103,7 +107,8 @@ def make_output(src, tag):
     while out.exists(): out=p.with_name(p.stem+'_V2_'+tag+f'_{n}.mp4'); n+=1
     return out
 
-def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
+def process(jid,src,target,profile, tiktok, codec_choice, mode='original'):
+    process_slots.acquire()
     try:
         jobs[jid].update(state='processing',progress=1,message='فحص الملف مع الحفاظ على التوقيت...'); m=probe(src)
         requested_fps = 0 if target in ('auto','') else float(target)
@@ -126,7 +131,7 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
             return
         if mode == 'convert':
             out=make_output(src,'Auto_1080p_'+output_fps_text+'FPS')
-            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf',f'{scale_filter},fps={output_fps_text}','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(out)]
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf',f'{scale_filter},fps={output_fps_text}','-c:v','libx264','-threads','1','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(out)]
             jobs[jid].update(message=f'تحويل الفيديو إلى 1080p مع الحفاظ على الاتجاه و{output_fps_text} FPS...', progress=5)
             p=subprocess.Popen(encode,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,bufsize=1)
             dur=max(m['duration_sec'],.1); last=5
@@ -144,7 +149,7 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
             # same timestamp trick used by the successful TikTok method.
             out=make_output(src,f'Professional_1080p_{output_fps_text}FPS_TikTokTiming')
             stage=out.with_name(out.stem+'_stage.mp4')
-            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf',f'{scale_filter},fps={output_fps_text}','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(stage)]
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf',f'{scale_filter},fps={output_fps_text}','-c:v','libx264','-threads','1','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(stage)]
             jobs[jid].update(message=f'الخيار الاحترافي: تجهيز فيديو 1080p مع الحفاظ على الاتجاه و{output_fps_text} FPS...', progress=5)
             p=subprocess.Popen(encode,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,bufsize=1)
             dur=max(m['duration_sec'],.1); last=5
@@ -176,7 +181,7 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
         vcodec='libx265' if codec=='hevc' else 'libx264'; tag=f'{profile}_{int(out_fps)}FPS_{codec}'; out=make_output(src,tag)
         cmd=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?']
         if tiktok=='1080': cmd += ['-vf',scale_filter]
-        cmd += ['-c:v',vcodec,'-crf','16']
+        cmd += ['-c:v',vcodec,'-threads','1','-crf','16']
         if codec=='h264': cmd += ['-preset','slow','-profile:v','high','-pix_fmt','yuv420p']
         else: cmd += ['-preset','slow','-tag:v','hvc1','-pix_fmt','yuv420p']
         cmd += ['-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','passthrough',str(out)]
@@ -190,7 +195,10 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
         if p.wait()!=0 or not out.exists(): raise RuntimeError('FFmpeg فشل في معالجة الفيديو.')
         final=probe(out); jobs[jid].update(state='done',progress=100,message='تمت المعالجة والفحص بنجاح.',output=str(out),output_name=out.name,info=final)
     except Exception as e: jobs[jid].update(state='error',progress=0,message=str(e))
-    finally: Path(src).unlink(missing_ok=True)
+    finally:
+        Path(src).unlink(missing_ok=True)
+        process_slots.release()
+        gc.collect()
 
 class Handler(BaseHTTPRequestHandler):
     def send_json(self,obj,code=200):
@@ -208,21 +216,29 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
     def _multipart(self):
-        ctype=self.headers.get('Content-Type',''); mm=re.search(r'boundary=(?:"([^"]+)"|([^;]+))',ctype)
-        if not mm: raise RuntimeError('صيغة رفع غير مدعومة')
-        boundary=(mm.group(1) or mm.group(2)).encode(); body=self.rfile.read(int(self.headers.get('Content-Length','0'))); fields={}; files={}
-        for part in body.split(b'--'+boundary):
-            if b'\r\n\r\n' not in part: continue
-            head,data=part.split(b'\r\n\r\n',1); data=data.rstrip(b'\r\n-'); hs=head.decode('utf-8','ignore'); nm=re.search(r'name="([^"]+)"',hs)
-            if not nm: continue
-            name=nm.group(1); fm=re.search(r'filename="([^"]*)"',hs); files[name]=(fm.group(1),data) if fm else None
-            if not fm: fields[name]=data.decode('utf-8','ignore')
+        content_length = int(self.headers.get('Content-Length', '0') or 0)
+        if content_length <= 0: raise RuntimeError('حجم الرفع غير معروف')
+        if content_length > MAX_UPLOAD_BYTES: raise RuntimeError('حجم الملف أكبر من الحد الآمن 220MB على الخادم المجاني')
+        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={
+            'REQUEST_METHOD': 'POST',
+            'CONTENT_TYPE': self.headers.get('Content-Type', ''),
+            'CONTENT_LENGTH': str(content_length),
+        }, keep_blank_values=True)
+        fields={}; files={}
+        for item in form.list or []:
+            if item.filename:
+                files[item.name]=(item.filename, item.file)
+            else:
+                fields[item.name]=item.value
         return fields,files
     def do_POST(self):
         try:
             fields,files=self._multipart()
             if 'file' not in files or not files['file']: raise RuntimeError('لم يتم اختيار فيديو')
-            name,data=files['file']; tmp=BASE/(uuid.uuid4().hex+(Path(name).suffix or '.input')); tmp.write_bytes(data)
+            name,uploaded=files['file']; tmp=BASE/(uuid.uuid4().hex+(Path(name).suffix or '.input'))
+            with tmp.open('wb') as dst:
+                shutil.copyfileobj(uploaded, dst, 1024 * 1024)
+            del uploaded
             if self.path=='/probe':
                 try: self.send_json({'ok':True,**probe(tmp)})
                 finally: tmp.unlink(missing_ok=True)

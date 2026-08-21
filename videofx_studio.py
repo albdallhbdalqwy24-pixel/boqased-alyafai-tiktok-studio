@@ -112,6 +112,18 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
         box = '1920:1080' if m['width'] >= m['height'] else '1080:1920'
         scale_filter = f'scale={box}:force_original_aspect_ratio=decrease:force_divisible_by=2'
 
+        if mode == 'silhouette':
+            if m['duration_sec'] > 20 or m['size_bytes'] > 350 * 1024 * 1024:
+                raise RuntimeError('وضع عزل اللاعب يقبل مقاطع قصيرة حتى 20 ثانية وحجم 350MB لتفادي نفاد ذاكرة Render.')
+            out=make_output(src,'AI_Silhouette_WhiteFog')
+            jobs[jid].update(message='تشغيل AI لعزل اللاعب ثم إنشاء خلفية ضبابية بيضاء...', progress=3)
+            command=['python3','/app/ai_silhouette.py',str(src),str(out)]
+            p=subprocess.run(command,capture_output=True,text=True)
+            if p.returncode!=0 or not out.exists():
+                raise RuntimeError(p.stderr.strip()[-1200:] or 'فشل عزل اللاعب بالذكاء الاصطناعي.')
+            final=probe(out)
+            jobs[jid].update(state='done',progress=100,message='تم عزل اللاعب وتركيبه كظل أسود فوق خلفية ضبابية بيضاء.',output=str(out),output_name=out.name,info=final)
+            return
         if mode in ('timing','multiplier'):
             # Restored working method: no video/audio re-encode; scale timestamps only.
             # A 15-second 60-FPS source becomes about 30 seconds before TikTok,
@@ -215,7 +227,9 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
 
 class Handler(BaseHTTPRequestHandler):
     def send_json(self,obj,code=200):
-        b=json.dumps(obj,ensure_ascii=False).encode(); self.send_response(code); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b)
+        b=json.dumps(obj,ensure_ascii=False).encode(); self.send_response(code); self.send_header('Access-Control-Allow-Origin','*'); self.send_header('Access-Control-Allow-Methods','GET,POST,OPTIONS'); self.send_header('Access-Control-Allow-Headers','Content-Type'); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b)
+    def do_OPTIONS(self):
+        self.send_response(204); self.send_header('Access-Control-Allow-Origin','*'); self.send_header('Access-Control-Allow-Methods','GET,POST,OPTIONS'); self.send_header('Access-Control-Allow-Headers','Content-Type'); self.end_headers()
     def do_GET(self):
         u=urlparse(self.path); q=parse_qs(u.query)
         if u.path=='/':
@@ -224,7 +238,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/download':
             j=jobs.get(q.get('id',[''])[0]); p=Path(j.get('output','')) if j and j.get('state')=='done' else None
             if not p or not p.exists(): self.send_error(404); return
-            self.send_response(200); self.send_header('Content-Type','video/mp4'); self.send_header('Content-Disposition',f'attachment; filename="{p.name}"'); self.send_header('Content-Length',str(p.stat().st_size)); self.end_headers()
+            self.send_response(200); self.send_header('Access-Control-Allow-Origin','*'); self.send_header('Content-Type','video/mp4'); self.send_header('Content-Disposition',f'attachment; filename="{p.name}"'); self.send_header('Content-Length',str(p.stat().st_size)); self.end_headers()
             with p.open('rb') as f: shutil.copyfileobj(f,self.wfile,1024*1024)
             return
         self.send_error(404)
@@ -250,7 +264,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path=='/start':
                 mode=fields.get('mode','original'); target=fields.get('fps','auto'); profile=fields.get('profile','auto'); tiktok=fields.get('tiktok','off'); codec=fields.get('codec','auto')
-                if mode not in ('original','timing','multiplier','fps','convert','tiktok','style') or target not in ('auto','60','90','120','preserve') or profile not in ('auto','gaming','nature','standard','pubg_clean_clarity') or tiktok not in ('off','1080') or codec not in ('auto','h264','hevc'): raise RuntimeError('خيار معالجة غير صالح')
+                if mode not in ('original','timing','multiplier','fps','convert','tiktok','style','silhouette') or target not in ('auto','60','90','120','preserve') or profile not in ('auto','gaming','nature','standard','pubg_clean_clarity') or tiktok not in ('off','1080') or codec not in ('auto','h264','hevc'): raise RuntimeError('خيار معالجة غير صالح')
                 jid=uuid.uuid4().hex; jobs[jid]={'state':'queued','progress':0,'message':'في الانتظار...'}; threading.Thread(target=process,args=(jid,tmp,target,profile,tiktok,codec,mode),daemon=True).start(); self.send_json({'ok':True,'job':jid}); return
             tmp.unlink(missing_ok=True); self.send_error(404)
         except Exception as e: self.send_json({'ok':False,'error':str(e)},400)

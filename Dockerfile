@@ -4,7 +4,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir rembg[cpu] pillow
+RUN pip install --no-cache-dir mediapipe numpy pillow
 
 WORKDIR /app
 COPY videofx_studio.py /app/videofx_studio.py

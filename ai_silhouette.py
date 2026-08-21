@@ -14,8 +14,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageFilter, ImageEnhance
-from rembg import new_session, remove
+import numpy as np
+import mediapipe as mp
+from PIL import Image, ImageFilter
 
 
 def probe(path):
@@ -54,15 +55,18 @@ def process(input_path, output_path, max_side=960):
         rendered = work / "rendered"; rendered.mkdir()
         extract = ["ffmpeg", "-hide_banner", "-y", "-i", str(input_path), "-fps_mode", "passthrough", str(frames / "%08d.png")]
         subprocess.run(extract, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        session = new_session("u2net_human_seg")
+        segmenter = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
         scale = min(1.0, max_side / max(width, height))
         work_w = max(2, int(width * scale) // 2 * 2)
         work_h = max(2, int(height * scale) // 2 * 2)
         for idx, frame_path in enumerate(sorted(frames.glob("*.png"))):
             with Image.open(frame_path).convert("RGB") as frame:
                 small = frame.resize((work_w, work_h), Image.Resampling.LANCZOS)
-                cut = remove(small, session=session, only_mask=False, alpha_matting=False).convert("RGBA")
-                alpha = cut.getchannel("A").filter(ImageFilter.GaussianBlur(0.55))
+                rgb = np.asarray(small, dtype=np.uint8)
+                result = segmenter.process(rgb)
+                mask = np.clip(result.segmentation_mask, 0.0, 1.0)
+                # Keep the subject solid while feathering only the boundary.
+                alpha = Image.fromarray(np.uint8(mask * 255), mode="L").filter(ImageFilter.GaussianBlur(0.7))
                 silhouette = Image.new("RGBA", (work_w, work_h), (5, 6, 9, 255))
                 silhouette.putalpha(alpha)
                 fog = make_fog((work_w, work_h), idx)
@@ -72,6 +76,7 @@ def process(input_path, output_path, max_side=960):
                 composed.convert("RGB").save(rendered / f"{idx + 1:08d}.jpg", quality=94, subsampling=0)
         encode = ["ffmpeg", "-hide_banner", "-y", "-framerate", str(fps), "-i", str(rendered / "%08d.jpg"), "-i", str(input_path), "-map", "0:v:0", "-map", "1:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-map_metadata", "0", "-movflags", "+faststart", "-fps_mode", "passthrough", str(output_path)]
         subprocess.run(encode, check=True)
+        segmenter.close()
     return {"width": width, "height": height, "fps": round(fps, 3), "duration": round(duration, 3)}
 
 

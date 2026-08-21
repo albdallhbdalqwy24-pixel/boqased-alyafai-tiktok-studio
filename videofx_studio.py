@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""VideoFX Studio V2 - واجهة محلية لمعالجة وفحص الفيديو باستخدام FFmpeg.
+"""VideoFX Studio V2 - خدمة Render لمعالجة وفحص الفيديو باستخدام FFmpeg وMediaPipe AI.
 
-يتطلب: python و ffmpeg و ffprobe. لا يعتمد على خدمة خارجية ولا يرفع الملفات إلى الإنترنت.
+تدعم وضع silhouette لعزل الشخص وتركيبه فوق خلفية ضبابية بيضاء للمقاطع القصيرة.
 """
 import json
 import mimetypes

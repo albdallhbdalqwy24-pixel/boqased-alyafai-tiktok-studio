@@ -232,8 +232,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204); self.send_header('Access-Control-Allow-Origin','*'); self.send_header('Access-Control-Allow-Methods','GET,POST,OPTIONS'); self.send_header('Access-Control-Allow-Headers','Content-Type'); self.end_headers()
     def do_GET(self):
         u=urlparse(self.path); q=parse_qs(u.query)
-        if u.path=='/':
-            b=HTML.encode(); self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b); return
+        if u.path in ('/','/index.html','/styles.css','/app.js'):
+            rel='index.html' if u.path=='/' else u.path.lstrip('/')
+            static=Path('/app/web')/rel
+            if not static.exists(): self.send_error(404); return
+            b=static.read_bytes(); ctype='text/html; charset=utf-8' if static.suffix=='.html' else ('text/javascript; charset=utf-8' if static.suffix=='.js' else 'text/css; charset=utf-8')
+            self.send_response(200); self.send_header('Access-Control-Allow-Origin','*'); self.send_header('Content-Type',ctype); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b); return
         if u.path=='/progress': self.send_json(jobs.get(q.get('id',[''])[0],{'state':'error','message':'المهمة غير موجودة'})); return
         if u.path=='/download':
             j=jobs.get(q.get('id',[''])[0]); p=Path(j.get('output','')) if j and j.get('state')=='done' else None

@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir mediapipe numpy pillow
 WORKDIR /app
 COPY videofx_studio.py /app/videofx_studio.py
 COPY ai_silhouette.py /app/ai_silhouette.py
+COPY web /app/web
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 10000

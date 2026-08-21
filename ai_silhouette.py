@@ -59,7 +59,9 @@ def process(input_path, output_path, max_side=960):
         scale = min(1.0, max_side / max(width, height))
         work_w = max(2, int(width * scale) // 2 * 2)
         work_h = max(2, int(height * scale) // 2 * 2)
-        for idx, frame_path in enumerate(sorted(frames.glob("*.png"))):
+        frame_paths = sorted(frames.glob("*.png"))
+        total_frames = max(1, len(frame_paths))
+        for idx, frame_path in enumerate(frame_paths):
             with Image.open(frame_path).convert("RGB") as frame:
                 small = frame.resize((work_w, work_h), Image.Resampling.LANCZOS)
                 rgb = np.asarray(small, dtype=np.uint8)
@@ -74,6 +76,9 @@ def process(input_path, output_path, max_side=960):
                 if (work_w, work_h) != (width, height):
                     composed = composed.resize((width, height), Image.Resampling.LANCZOS)
                 composed.convert("RGB").save(rendered / f"{idx + 1:08d}.jpg", quality=94, subsampling=0)
+            if idx == 0 or (idx + 1) % 5 == 0 or idx + 1 == total_frames:
+                print(json.dumps({"stage": "segment", "progress": 5 + int(((idx + 1) / total_frames) * 78)}, ensure_ascii=False), flush=True)
+        print(json.dumps({"stage": "encode", "progress": 86}, ensure_ascii=False), flush=True)
         encode = ["ffmpeg", "-hide_banner", "-y", "-framerate", str(fps), "-i", str(rendered / "%08d.jpg"), "-i", str(input_path), "-map", "0:v:0", "-map", "1:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-map_metadata", "0", "-movflags", "+faststart", "-fps_mode", "passthrough", str(output_path)]
         subprocess.run(encode, check=True)
         segmenter.close()

@@ -117,10 +117,21 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
                 raise RuntimeError('وضع عزل اللاعب يقبل مقاطع قصيرة حتى 20 ثانية وحجم 350MB لتفادي نفاد ذاكرة Render.')
             out=make_output(src,'AI_Silhouette_WhiteFog')
             jobs[jid].update(message='تشغيل AI لعزل اللاعب ثم إنشاء خلفية ضبابية بيضاء...', progress=3)
-            command=['python3','/app/ai_silhouette.py',str(src),str(out)]
-            p=subprocess.run(command,capture_output=True,text=True)
-            if p.returncode!=0 or not out.exists():
-                raise RuntimeError(p.stderr.strip()[-1200:] or 'فشل عزل اللاعب بالذكاء الاصطناعي.')
+            command=['python3','-u','/app/ai_silhouette.py',str(src),str(out)]
+            p=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+            logs=[]
+            for line in p.stdout:
+                logs.append(line.strip())
+                try:
+                    event=json.loads(line)
+                    if event.get('progress') is not None:
+                        jobs[jid].update(progress=min(98,int(event['progress'])),message='AI: عزل اللاعب وإنشاء الخلفية الضبابية...')
+                except json.JSONDecodeError:
+                    pass
+            code=p.wait()
+            if code!=0 or not out.exists():
+                raise RuntimeError('\n'.join(logs)[-1600:] or 'فشل عزل اللاعب بالذكاء الاصطناعي.')
+            jobs[jid].update(progress=98,message='ترميز الفيديو النهائي وفحص الخصائص...')
             final=probe(out)
             jobs[jid].update(state='done',progress=100,message='تم عزل اللاعب وتركيبه كظل أسود فوق خلفية ضبابية بيضاء.',output=str(out),output_name=out.name,info=final)
             return

@@ -66,7 +66,7 @@ async function poll(jobId) {
   for (;;) {
     const response = await request(`${API_BASE}/progress?id=${encodeURIComponent(jobId)}`, {}, 30000);
     const job = await response.json(); const progress = Number(job.progress || 0);
-    setProgress(Math.max(20, progress), job.message || "جاري عزل اللاعب وإنشاء الخلفية الضبابية...");
+    setProgress(Math.max(3, progress), job.message || "جاري عزل اللاعب وإنشاء الخلفية الضبابية...");
     if (job.state === "done") {
       setProgress(100, "اكتملت المعالجة");
       objectUrl = `${API_BASE}/download?id=${encodeURIComponent(jobId)}`;
@@ -74,7 +74,7 @@ async function poll(jobId) {
       document.querySelector("#resultMeta").textContent = `${job.output_name || "VideoFX_AI_Silhouette.mp4"} — جاهز للتنزيل.`;
       show(resultCard, true); processBtn.disabled = false; return;
     }
-    if (job.state === "error") throw new Error(job.error || "فشلت المعالجة على الخادم.");
+    if (job.state === "error") throw new Error(job.message || job.error || "فشلت المعالجة على الخادم.");
     await new Promise((resolve) => setTimeout(resolve, 1400));
   }
 }

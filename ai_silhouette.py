@@ -47,7 +47,7 @@ def make_fog(size, frame_index):
     return Image.alpha_composite(base.convert("RGBA"), fog)
 
 
-def process(input_path, output_path, max_side=960):
+def process(input_path, output_path, max_side=640):
     width, height, fps, duration = probe(input_path)
     with tempfile.TemporaryDirectory(prefix="videofx_ai_") as work:
         work = Path(work)
@@ -73,13 +73,12 @@ def process(input_path, output_path, max_side=960):
                 silhouette.putalpha(alpha)
                 fog = make_fog((work_w, work_h), idx)
                 composed = Image.alpha_composite(fog, silhouette)
-                if (work_w, work_h) != (width, height):
-                    composed = composed.resize((width, height), Image.Resampling.LANCZOS)
-                composed.convert("RGB").save(rendered / f"{idx + 1:08d}.jpg", quality=94, subsampling=0)
+                # Keep working frames small; FFmpeg restores the original dimensions at encode time.
+                composed.convert("RGB").save(rendered / f"{idx + 1:08d}.jpg", quality=86, subsampling=2)
             if idx == 0 or (idx + 1) % 5 == 0 or idx + 1 == total_frames:
                 print(json.dumps({"stage": "segment", "progress": 5 + int(((idx + 1) / total_frames) * 78)}, ensure_ascii=False), flush=True)
         print(json.dumps({"stage": "encode", "progress": 86}, ensure_ascii=False), flush=True)
-        encode = ["ffmpeg", "-hide_banner", "-y", "-framerate", str(fps), "-i", str(rendered / "%08d.jpg"), "-i", str(input_path), "-map", "0:v:0", "-map", "1:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-map_metadata", "0", "-movflags", "+faststart", "-fps_mode", "passthrough", str(output_path)]
+        encode = ["ffmpeg", "-hide_banner", "-y", "-framerate", str(fps), "-i", str(rendered / "%08d.jpg"), "-i", str(input_path), "-map", "0:v:0", "-map", "1:a?", "-vf", f"scale={width}:{height}:flags=lanczos", "-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p", "-c:a", "copy", "-map_metadata", "0", "-movflags", "+faststart", "-fps_mode", "passthrough", str(output_path)]
         subprocess.run(encode, check=True)
         segmenter.close()
     return {"width": width, "height": height, "fps": round(fps, 3), "duration": round(duration, 3)}

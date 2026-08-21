@@ -124,6 +124,27 @@ def process(jid,src,target,profile,tiktok,codec_choice,mode='original'):
             final=probe(out)
             jobs[jid].update(state='done',progress=100,message='تم تجهيز توقيت TikTok بدون إعادة ترميز.',output=str(out),output_name=out.name,info=final)
             return
+        if mode == 'style':
+            # VideoFX Style: visual-only treatment. Preserve source dimensions, orientation and frame timing.
+            # The chain is intentionally light: denoise before sharpening, vivid but controlled color, and clean edges.
+            out=make_output(src,'VideoFX_Style_PUBG_CleanClarity')
+            style_filter='hqdn3d=1.0:1.0:2.0:2.0,eq=contrast=1.16:saturation=1.18:brightness=0.01,unsharp=5:5:0.55:5:5:0,format=yuv420p'
+            source_rate=float(m.get('bitrate_mbps') or 0)
+            style_maxrate=max(3.0,min(16.0,(source_rate or 6.0)*1.18))
+            style_bufsize=max(6.0,style_maxrate*2)
+            encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf',style_filter,'-c:v','libx264','-preset','superfast','-crf','17','-maxrate',f'{style_maxrate:.1f}M','-bufsize',f'{style_bufsize:.1f}M','-profile:v','high','-pix_fmt','yuv420p','-c:a','copy','-movflags','+faststart','-fps_mode','passthrough','-progress','pipe:2','-nostats',str(out)]
+            jobs[jid].update(message=f'تطبيق PUBG Clean Clarity دون تغيير الدقة أو FPS ({m["width"]}×{m["height"]} | {m["fps"]} FPS)...', progress=5)
+            p=subprocess.Popen(encode,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,bufsize=1)
+            dur=max(m['duration_sec'],.1); last=5
+            for line in p.stderr:
+                mm=re.search(r'out_time_ms=(\d+)',line)
+                if mm:
+                    prog=min(94,5+int((int(mm.group(1))/1000000)/dur*89))
+                    if prog>last: last=prog; jobs[jid]['progress']=prog
+            if p.wait()!=0 or not out.exists(): raise RuntimeError('فشل تطبيق VideoFX Style على الفيديو.')
+            final=probe(out)
+            jobs[jid].update(state='done',progress=100,message='اكتمل VideoFX Style مع الحفاظ على FPS والأبعاد والاتجاه.',output=str(out),output_name=out.name,info=final)
+            return
         if mode == 'convert':
             out=make_output(src,'Auto_1080p_'+output_fps_text+'FPS')
             encode=['ffmpeg','-hide_banner','-y','-i',str(src),'-map','0:v:0','-map','0:a?','-vf',f'{scale_filter},fps={output_fps_text}','-c:v','libx264','-preset','superfast','-crf','18','-profile:v','high','-pix_fmt','yuv420p','-c:a','aac','-b:a','320k','-ar','48000','-movflags','+faststart','-fps_mode','cfr','-progress','pipe:2','-nostats',str(out)]
@@ -229,7 +250,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path=='/start':
                 mode=fields.get('mode','original'); target=fields.get('fps','auto'); profile=fields.get('profile','auto'); tiktok=fields.get('tiktok','off'); codec=fields.get('codec','auto')
-                if mode not in ('original','timing','multiplier','fps','convert','tiktok') or target not in ('auto','60','90','120') or profile not in ('auto','gaming','nature','standard') or tiktok not in ('off','1080') or codec not in ('auto','h264','hevc'): raise RuntimeError('خيار معالجة غير صالح')
+                if mode not in ('original','timing','multiplier','fps','convert','tiktok','style') or target not in ('auto','60','90','120','preserve') or profile not in ('auto','gaming','nature','standard','pubg_clean_clarity') or tiktok not in ('off','1080') or codec not in ('auto','h264','hevc'): raise RuntimeError('خيار معالجة غير صالح')
                 jid=uuid.uuid4().hex; jobs[jid]={'state':'queued','progress':0,'message':'في الانتظار...'}; threading.Thread(target=process,args=(jid,tmp,target,profile,tiktok,codec,mode),daemon=True).start(); self.send_json({'ok':True,'job':jid}); return
             tmp.unlink(missing_ok=True); self.send_error(404)
         except Exception as e: self.send_json({'ok':False,'error':str(e)},400)

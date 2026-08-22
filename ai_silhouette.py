@@ -74,7 +74,7 @@ def make_fog(size, frame_index):
     return Image.alpha_composite(base.convert("RGBA"), fog)
 
 
-def process(input_path, output_path, max_side=640):
+def process(input_path, output_path, max_side=360):
     width, height, fps, duration = probe(input_path)
     with tempfile.TemporaryDirectory(prefix="videofx_ai_") as work:
         work = Path(work)
@@ -82,8 +82,9 @@ def process(input_path, output_path, max_side=640):
         rendered = work / "rendered"; rendered.mkdir()
         extract = ["ffmpeg", "-hide_banner", "-y", "-i", str(input_path), "-fps_mode", "passthrough", str(frames / "%08d.png")]
         subprocess.run(extract, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        segmenter = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
-        face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=False)
+        segmenter = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=0)
+        face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, refine_landmarks=False)
+        last_centers = []
         scale = min(1.0, max_side / max(width, height))
         work_w = max(2, int(width * scale) // 2 * 2)
         work_h = max(2, int(height * scale) // 2 * 2)
@@ -94,7 +95,11 @@ def process(input_path, output_path, max_side=640):
                 small = frame.resize((work_w, work_h), Image.Resampling.LANCZOS)
                 rgb = np.asarray(small, dtype=np.uint8)
                 result = segmenter.process(rgb)
-                face_result = face_mesh.process(rgb)
+                # Track facial landmarks every third frame to reduce CPU while keeping the glow stable.
+                if idx % 3 == 0 or not last_centers:
+                    face_result = face_mesh.process(rgb)
+                    if face_result.multi_face_landmarks:
+                        last_centers = eye_centers(face_result.multi_face_landmarks[0], work_w, work_h)
                 mask = np.clip(result.segmentation_mask, 0.0, 1.0)
                 # Keep the subject solid while feathering only the boundary.
                 alpha = Image.fromarray(np.uint8(mask * 255), mode="L").filter(ImageFilter.GaussianBlur(0.7))
@@ -102,8 +107,8 @@ def process(input_path, output_path, max_side=640):
                 silhouette.putalpha(alpha)
                 fog = make_fog((work_w, work_h), idx)
                 composed = Image.alpha_composite(fog, silhouette)
-                if face_result.multi_face_landmarks:
-                    composed = add_eye_glow(composed, eye_centers(face_result.multi_face_landmarks[0], work_w, work_h))
+                if last_centers:
+                    composed = add_eye_glow(composed, last_centers)
                 # Keep working frames small; FFmpeg restores the original dimensions at encode time.
                 composed.convert("RGB").save(rendered / f"{idx + 1:08d}.jpg", quality=86, subsampling=2)
             if idx == 0 or (idx + 1) % 5 == 0 or idx + 1 == total_frames:

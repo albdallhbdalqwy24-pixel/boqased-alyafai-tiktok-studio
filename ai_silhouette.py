@@ -30,6 +30,33 @@ def probe(path):
     return int(stream["width"]), int(stream["height"]), fps, duration
 
 
+def eye_centers(face_landmarks, width, height):
+    groups = ([33, 133, 159, 145], [362, 263, 386, 374])
+    centers = []
+    for group in groups:
+        points = [face_landmarks.landmark[i] for i in group]
+        x = int(sum(p.x for p in points) / len(points) * width)
+        y = int(sum(p.y for p in points) / len(points) * height)
+        centers.append((x, y))
+    return centers
+
+
+def add_eye_glow(image, centers):
+    if not centers:
+        return image
+    glow = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    sharp = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    radius = max(3, min(image.size) // 70)
+    from PIL import ImageDraw
+    gd = ImageDraw.Draw(glow)
+    sd = ImageDraw.Draw(sharp)
+    for x, y in centers:
+        gd.ellipse((x-radius*4, y-radius*4, x+radius*4, y+radius*4), fill=(255, 24, 35, 170))
+        sd.ellipse((x-radius, y-radius//2, x+radius, y+radius//2+1), fill=(255, 35, 45, 245))
+    glow = glow.filter(ImageFilter.GaussianBlur(radius * 2))
+    return Image.alpha_composite(Image.alpha_composite(image, glow), sharp)
+
+
 def make_fog(size, frame_index):
     w, h = size
     # Generated light fog: white/pearl base, soft moving gray clouds, no source frame.
@@ -56,6 +83,7 @@ def process(input_path, output_path, max_side=640):
         extract = ["ffmpeg", "-hide_banner", "-y", "-i", str(input_path), "-fps_mode", "passthrough", str(frames / "%08d.png")]
         subprocess.run(extract, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         segmenter = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
+        face_mesh = mp.solutions.face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=False)
         scale = min(1.0, max_side / max(width, height))
         work_w = max(2, int(width * scale) // 2 * 2)
         work_h = max(2, int(height * scale) // 2 * 2)
@@ -66,6 +94,7 @@ def process(input_path, output_path, max_side=640):
                 small = frame.resize((work_w, work_h), Image.Resampling.LANCZOS)
                 rgb = np.asarray(small, dtype=np.uint8)
                 result = segmenter.process(rgb)
+                face_result = face_mesh.process(rgb)
                 mask = np.clip(result.segmentation_mask, 0.0, 1.0)
                 # Keep the subject solid while feathering only the boundary.
                 alpha = Image.fromarray(np.uint8(mask * 255), mode="L").filter(ImageFilter.GaussianBlur(0.7))
@@ -73,6 +102,8 @@ def process(input_path, output_path, max_side=640):
                 silhouette.putalpha(alpha)
                 fog = make_fog((work_w, work_h), idx)
                 composed = Image.alpha_composite(fog, silhouette)
+                if face_result.multi_face_landmarks:
+                    composed = add_eye_glow(composed, eye_centers(face_result.multi_face_landmarks[0], work_w, work_h))
                 # Keep working frames small; FFmpeg restores the original dimensions at encode time.
                 composed.convert("RGB").save(rendered / f"{idx + 1:08d}.jpg", quality=86, subsampling=2)
             if idx == 0 or (idx + 1) % 5 == 0 or idx + 1 == total_frames:
@@ -81,6 +112,7 @@ def process(input_path, output_path, max_side=640):
         encode = ["ffmpeg", "-hide_banner", "-y", "-framerate", str(fps), "-i", str(rendered / "%08d.jpg"), "-i", str(input_path), "-map", "0:v:0", "-map", "1:a?", "-vf", f"scale={width}:{height}:flags=lanczos", "-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p", "-c:a", "copy", "-map_metadata", "0", "-movflags", "+faststart", "-fps_mode", "passthrough", str(output_path)]
         subprocess.run(encode, check=True)
         segmenter.close()
+        face_mesh.close()
     return {"width": width, "height": height, "fps": round(fps, 3), "duration": round(duration, 3)}
 
 
